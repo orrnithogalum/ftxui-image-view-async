@@ -1,3 +1,0 @@
-/home/catmull/Documents/Code/Cpp/ftxui-image-view/build/_deps/ftxui-subbuild/CMakeFiles/ftxui-populate.dir
-/home/catmull/Documents/Code/Cpp/ftxui-image-view/build/_deps/ftxui-subbuild/CMakeFiles/edit_cache.dir
-/home/catmull/Documents/Code/Cpp/ftxui-image-view/build/_deps/ftxui-subbuild/CMakeFiles/rebuild_cache.dir

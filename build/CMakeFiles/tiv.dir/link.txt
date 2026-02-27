@@ -1,2 +1,0 @@
-/usr/bin/ar qc libtiv.a CMakeFiles/tiv.dir/libs/tiv_lib.cpp.o
-/usr/bin/ranlib libtiv.a

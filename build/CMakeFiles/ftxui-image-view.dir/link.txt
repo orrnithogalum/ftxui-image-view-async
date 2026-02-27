@@ -1,2 +1,0 @@
-/usr/bin/ar qc libftxui-image-view.a "CMakeFiles/ftxui-image-view.dir/src/image_view.cpp.o"
-/usr/bin/ranlib libftxui-image-view.a

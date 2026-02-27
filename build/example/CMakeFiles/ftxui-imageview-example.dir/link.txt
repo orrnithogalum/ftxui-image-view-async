@@ -1,1 +1,0 @@
-/usr/bin/c++ -g -Wl,--dependency-file=CMakeFiles/ftxui-imageview-example.dir/link.d "CMakeFiles/ftxui-imageview-example.dir/main.cpp.o" -o ftxui-imageview-example  ../libftxui-image-view.a /usr/lib/libftxui-component.a /usr/lib/libftxui-dom.a /usr/lib/libftxui-screen.a ../libtiv.a -lX11
