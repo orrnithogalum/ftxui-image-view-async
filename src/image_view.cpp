@@ -5,13 +5,14 @@
 #include <memory>     // for make_shared
 #include <string>     // for string, wstring
 #include <sstream>
+#include <fstream>
 
 #include "ftxui/dom/elements.hpp"     // for Element, text, vtext
 #include "ftxui/dom/requirement.hpp"  // for Requirement
 #include "ftxui/screen/screen.hpp"    // for Pixel, Screen
 #include "ftxui/dom/node.hpp"         // for Node
 
-#include "tiv_lib.h"
+#include "../libs/tiv_lib.h"
 
 namespace ftxui {
 
@@ -20,17 +21,47 @@ namespace {
 using ftxui::Screen;
 
 class ImageView: public Node {
+private:
+    inline static std::unordered_map<std::string, cimg_library::CImg<unsigned char>> cache_;
+
+    // Debug variables
+    inline static int compute_count_ = 0;
+    inline static int render_count_ = 0;
+    std::ofstream log_file_;
+
 public:
-    explicit ImageView(std::string_view url) : url_(url) {}
+    explicit ImageView(std::string_view url) : url_(url) {
+        log_file_.open("method_calls.log", std::ios::app);
+
+        if (!log_file_.is_open()) {
+            std::ofstream create_file("method_calls.log");
+            create_file.close();
+            log_file_.open("method_calls.log", std::ios::app);
+        }
+    }
 
     void ComputeRequirement() override {
-        img_ = tiv::load_rgb_CImg(url_.c_str());
+        auto it = cache_.find(std::string(url_));
+
+        if (it != cache_.end()) {
+            img_ = it->second;
+        } else {
+            ImageView::compute_count_++;
+            log_file_ << "COMPUTE: " << ImageView::compute_count_ << std::endl;
+
+            auto img = tiv::load_rgb_CImg(url_.c_str());
+            cache_[std::string(url_)] = img;
+            img_ = img;
+        }
 
         requirement_.min_x = img_.width() / 4;
         requirement_.min_y = img_.height() / 8;
     }
 
     void Render(Screen& screen) override {
+        ImageView::render_count_++;
+        log_file_ << "RENDER: " << ImageView::render_count_ << std::endl;
+
         auto get_pixel = [this](int row, int col) -> unsigned long {
             return (((unsigned long) img_(row, col, 0, 0)) << 16)
                 | (((unsigned long) img_(row, col, 0, 1)) << 8)
