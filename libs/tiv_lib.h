@@ -76,6 +76,11 @@ struct size {
         double scale = std::min(container.width / static_cast<double>(width), container.height / static_cast<double>(height));
         return scaled(scale);
     }
+
+    size fitted_within(size* container) {
+        double scale = std::min(container->width / static_cast<double>(width), container->height / static_cast<double>(height));
+        return scaled(scale);
+    }
 };
 
 typedef std::function<unsigned long(int, int)> GetPixelFunction;

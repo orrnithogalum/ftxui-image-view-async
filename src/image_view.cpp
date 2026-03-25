@@ -6,13 +6,15 @@
 #include <cstdint>
 #include <sstream>
 #include <utility>
-#include <memory>     // for make_shared
-#include <string>     // for string, wstring
+#include <memory>
+#include <string>
+#include <thread>
+#include <mutex>
 
-#include "ftxui/dom/requirement.hpp"  // for Requirement
-#include "ftxui/screen/screen.hpp"    // for Pixel, Screen
-#include "ftxui/dom/elements.hpp"     // for Element, text, vtext
-#include "ftxui/dom/node.hpp"         // for Node
+#include "ftxui/dom/requirement.hpp"
+#include "ftxui/screen/screen.hpp"
+#include "ftxui/dom/elements.hpp"
+#include "ftxui/dom/node.hpp"
 
 #include "tiv_lib.h"
 
@@ -22,31 +24,46 @@ namespace {
 
 using ftxui::Screen;
 
-using ResizeKey = std::tuple<int, int, int>;
+using ResizeKey = std::tuple<int, int, int, uint16_t>;
 struct ResizeKeyHash {
     std::size_t operator()(const ResizeKey& k) const {
-        auto const& [url, w, h] = k;
+        auto const& [url, w, h, version] = k;
         std::size_t h1 = std::hash<int>{}(url);
         std::size_t h2 = std::hash<int>{}(w);
         std::size_t h3 = std::hash<int>{}(h);
-        return h1 ^ (h2 << 1) ^ (h3 << 2);
+        std::size_t h4 = std::hash<uint16_t>{}(version);
+        return h1 ^ (h2 << 1) ^ (h3 << 2) ^ (h4 << 3);
     }
 };
 
 struct CharKey {
-    uint64_t value;
-
-    CharKey(uint32_t url, uint16_t x, uint16_t y) {
-        value = ((uint64_t)url << 32) | (x << 16) | y;
-    }
+    uint32_t url;
+    uint16_t x;
+    uint16_t y;
+    uint16_t version;
+    uint16_t width;
+    uint16_t height;
 
     bool operator==(const CharKey& other) const {
-        return value == other.value;
+        return url == other.url &&
+               x == other.x &&
+               y == other.y &&
+               version == other.version &&
+               width == other.width &&
+               height == other.height;
     }
 };
 struct CharKeyHash {
     size_t operator()(const CharKey& k) const {
-        return std::hash<uint64_t>{}(k.value);
+        size_t h1 = std::hash<uint32_t>{}(k.url);
+        size_t h2 = std::hash<uint16_t>{}(k.x);
+        size_t h3 = std::hash<uint16_t>{}(k.y);
+        size_t h4 = std::hash<uint16_t>{}(k.version);
+        size_t h5 = std::hash<uint16_t>{}(k.width);
+        size_t h6 = std::hash<uint16_t>{}(k.height);
+
+        return h1 ^ (h2 << 1) ^ (h3 << 2) ^ (h4 << 3)
+                   ^ (h5 << 4) ^ (h6 << 5);
     }
 };
 
@@ -55,6 +72,12 @@ public:
     inline static std::unordered_map<ResizeKey, cimg_library::CImg<unsigned char>, ResizeKeyHash> resized_cache_;
     inline static std::unordered_map<std::string, cimg_library::CImg<unsigned char>> cimg_cache_;
     inline static std::unordered_map<CharKey, tiv::CharData, CharKeyHash> char_cache_;
+    inline static std::unordered_map<std::string, int> version_;
+
+    inline static std::unordered_map<std::string, bool> inflight_;
+    inline static std::mutex mutex_;
+
+    inline static cimg_library::CImg<unsigned char> black_img = cimg_library::CImg<unsigned char>(1, 1, 1, 3, 0);
 
     uint32_t url_hash_;
 
@@ -63,14 +86,35 @@ public:
     }
 
     void ComputeRequirement() override {
-        auto it = cimg_cache_.find(url_);
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
 
-        if (it != cimg_cache_.end()) {
-            img_ = &it->second;
-        } else {
-            auto img = tiv::load_rgb_CImg(url_.c_str());
-            auto [it, _] = cimg_cache_.emplace(url_, std::move(img));
-            img_ = &it->second;
+            auto it = cimg_cache_.find(url_);
+            if (it != cimg_cache_.end()) {
+                img_ = &it->second;
+            } else {
+                // insert black image immediately
+                auto [it2, _] = cimg_cache_.emplace(url_, black_img);
+                img_ = &it2->second;
+
+                // if not already loading → start async load
+                if (!inflight_[url_]) {
+                    inflight_[url_] = true;
+
+                    std::string url_copy = url_;
+
+                    std::thread([url_copy]() {
+                        auto img = tiv::load_rgb_CImg(url_copy.c_str());
+
+                        std::lock_guard<std::mutex> lock(mutex_);
+
+                        cimg_cache_[url_copy] = std::move(img);
+                        version_[url_copy]++;
+
+                        inflight_[url_copy] = false;
+                    }).detach();
+                }
+            }
         }
 
         requirement_.min_x = img_->width() / 4;
@@ -81,48 +125,67 @@ public:
         auto origin_image_width = (box_.x_max - box_.x_min + 1) * 4;
         auto origin_image_height = (box_.y_max - box_.y_min + 1) * 8;
 
-        auto& original = cimg_cache_.at(url_);
-        auto new_size = tiv::size(*img_).fitted_within(tiv::size(origin_image_width, origin_image_height));
+        const cimg_library::CImg<unsigned char>* original;
+        uint16_t version;
 
-        ResizeKey key{url_hash_, new_size.width, new_size.height};
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            original = &cimg_cache_.at(url_);
+            version = version_[url_];
+        }
+
+        auto container_size = tiv::size(origin_image_width, origin_image_height);
+        auto new_size = tiv::size(original->_width, original->_height).fitted_within(&container_size);
+        ResizeKey key{url_hash_, new_size.width, new_size.height, version};
 
         auto it = resized_cache_.find(key);
         if (it != resized_cache_.end()) {
-            img_ = &it->second;
+            original = &it->second;
         } else {
-            auto img = original.get_resize(
+            auto img = original->get_resize(
                 new_size.width, new_size.height, -100, -100, 5
             );
 
             it = resized_cache_.emplace(key, std::move(img)).first;
-            img_ = &it->second;
+            original = &it->second;
         }
 
-        auto get_pixel = [this](int row, int col) -> unsigned long {
-            return (((unsigned long) (*img_)(row, col, 0, 0)) << 16)
-                | (((unsigned long) (*img_)(row, col, 0, 1)) << 8)
-                | (((unsigned long) (*img_)(row, col, 0, 2)));
+        auto get_pixel = [original](int row, int col) -> unsigned long {
+            return (((unsigned long) (*original)(row, col, 0, 0)) << 16)
+                | (((unsigned long) (*original)(row, col, 0, 1)) << 8)
+                | (((unsigned long) (*original)(row, col, 0, 2)));
         };
 
         auto screen_y = box_.y_min;
 
-        for (uint16_t y = 0; y <= img_->height() - 8; y += 8) {
+        for (uint16_t y = 0; y <= original->height() - 8; y += 8) {
             auto screen_x = box_.x_min;
 
-            for (uint16_t x = 0; x <= img_->width() - 4; x += 4) {
+            for (uint16_t x = 0; x <= original->width() - 4; x += 4) {
                 if(screen_x > box_.x_max)
                     break;
 
-                CharKey key{url_hash_, x, y};
+
+                CharKey key{
+                    url_hash_,
+                    x,
+                    y,
+                    version,
+                    static_cast<uint16_t>(new_size.width),
+                    static_cast<uint16_t>(new_size.height)
+                };
                 const tiv::CharData* charData;
 
-                auto cache_it = char_cache_.find(key);
-                if (cache_it != char_cache_.end()) {
-                    charData = &cache_it->second;
-                } else {
-                    auto [it, _] = char_cache_.emplace(key,
-                        tiv::findCharData(get_pixel, x, y, tiv::FLAG_24BIT));
-                    charData = &it->second;
+                {
+                    std::lock_guard<std::mutex> lock(mutex_);
+
+                    auto cache_it = char_cache_.find(key);
+                    if (cache_it != char_cache_.end()) {
+                        charData = &cache_it->second;
+                    } else {
+                        auto [it, _] = char_cache_.emplace(key, tiv::findCharData(get_pixel, x, y, tiv::FLAG_24BIT));
+                        charData = &it->second;
+                    }
                 }
 
                 std::stringstream output;
