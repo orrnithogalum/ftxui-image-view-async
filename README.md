@@ -12,7 +12,7 @@
 
 Images are now loaded asynchronously in a separate thread instead of blocking the UI thread.
 
-Be aware that minor "hitches" or "stutters" may occur the first time an image is rendered (not computed) on the UI thread. This happens because the pixel cache must be updated, and FTXUI does not handle large screen updates in a single frame efficiently. These stutters can range from ~10ms to 30ms and are more noticeable with large images (e.g., 2K wallpapers).
+Be aware that minor "hitches" or "stutters" may occur the first time an image is rendered (not computed) on the UI thread. This happens because the cell cache must be updated, and FTXUI does not handle large screen updates in a single frame efficiently. These stutters can range from ~10ms to 30ms and are more noticeable with large images (e.g., 2K wallpapers).
 
 Since loading happens in a separate thread, the first rendered frame will display a black image. The UI must be manually refreshed for the actual image to appear. You can use `setOnLoadedImageCallback()` for this purpose. See the example in `./example/main.cpp`.
 
@@ -40,7 +40,7 @@ Each image maintains an internal version counter. This allows caches to be inval
 
 - [TerminalImageViewer](https://github.com/stefanhaustein/TerminalImageViewer.git): A powerful library used for terminal image rendering. Some parts were originally modified by [ljrrjl](https://github.com/ljrrjl) to integrate with FTXUI (see `./libs`).
 
-For most users, installing **ImageMagick** is sufficient:
+For most users, installing `imagemagick` is sufficient:
 
 **Ubuntu:**
 ```bash
