@@ -68,6 +68,27 @@ Element image_view(std::string_view path) {
     return std::make_shared<ImageView>(path);
 }
 ```
+
+To use this library in your own ftxui projects:
+
+```cmake
+FetchContent_Declare(
+  ftxui-image-view
+  GIT_REPOSITORY https://github.com/orrnithogalum/ftxui-image-view-async.git
+  GIT_TAG main
+)
+FetchContent_MakeAvailable(ftxui-image-view)
+
+# ...
+
+target_link_libraries(test
+    ftxui::screen
+    ftxui::dom
+    ftxui::component
+    ftxui-image-view
+)
+```
+
 ## Building & Running the Example
 
 To try the example locally, clone the repository and build it using CMake:
