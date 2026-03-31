@@ -105,7 +105,12 @@ public:
                     std::string url_copy = url_;
 
                     std::thread([url_copy]() {
-                        auto img = tiv::load_rgb_CImg(url_copy.c_str());
+                        cimg_library::CImg<unsigned char> img;
+                        try {
+                            img = tiv::load_rgb_CImg(url_copy.c_str());
+                        } catch (...) {
+                            img = black_img;
+                        }
 
                         std::lock_guard<std::mutex> lock(mutex_);
 
