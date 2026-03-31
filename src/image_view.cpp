@@ -16,8 +16,8 @@
 #include "ftxui/dom/elements.hpp"
 #include "ftxui/dom/node.hpp"
 
-#include "../libs/bounded_cache.hpp"
-#include "../libs/tiv_lib.h"
+#include "bounded_cache.hpp"
+#include "tiv_lib.h"
 
 namespace ftxui {
 
