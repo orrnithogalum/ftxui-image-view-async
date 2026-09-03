@@ -30,41 +30,21 @@
  *     limitations under the License.
  */
 
- #include "tiv_lib.h"
+#include "tiv_lib.h"
 
+#include <algorithm>
 #include <array>
 #include <bitset>
 #include <cmath>
-#include <filesystem>
-#include <fstream>
 #include <functional>
-#include <iostream>
 #include <map>
-#include <string>
-#include <vector>
-
-#ifdef _POSIX_VERSION
-// Console output size detection
-#include <sys/ioctl.h>
-// Error explanation, for some reason
-#include <cstring>
-#endif
-
-#ifdef _WIN32
-#include <windows.h>
-// Error explanation
-#include <system_error>
-#endif
-
-
-namespace tiv
-{
 
 const int END_MARKER = 0;
 
 // An interleaved map of 4x8 bit character bitmaps (each hex digit represents a
 // row) to the corresponding Unicode character code point.
 constexpr unsigned int BITMAPS[] = {
+    //Bitmap representation, Unicode character code, flags
     0x00000000, 0x00a0, 0,
 
     // Block graphics
@@ -72,9 +52,9 @@ constexpr unsigned int BITMAPS[] = {
 
     0x0000000f, 0x2581, 0,  // lower 1/8
     0x000000ff, 0x2582, 0,  // lower 1/4
-    0x00000fff, 0x2583, 0, 
+    0x00000fff, 0x2583, 0,
     0x0000ffff, 0x2584, 0,  // lower 1/2
-    0x000fffff, 0x2585, 0, 
+    0x000fffff, 0x2585, 0,
     0x00ffffff, 0x2586, 0,  // lower 3/4
     0x0fffffff, 0x2587, 0,
     // 0xffffffff, 0x2588,  // full; redundant with inverse space
@@ -85,9 +65,9 @@ constexpr unsigned int BITMAPS[] = {
 
     0x0000cccc, 0x2596, 0,  // quadrant lower left
     0x00003333, 0x2597, 0,  // quadrant lower right
-    0xcccc0000, 0x2598, 0, // quadrant upper left
+    0xcccc0000, 0x2598, 0,  // quadrant upper left
              // 0xccccffff, 0x2599,  // 3/4 redundant with inverse 1/4
-    0xcccc3333, 0x259a, 0, // diagonal 1/2
+    0xcccc3333, 0x259a, 0,  // diagonal 1/2
                          // 0xffffcccc, 0x259b,  // 3/4 redundant
     // 0xffff3333, 0x259c,  // 3/4 redundant
     0x33330000, 0x259d, 0,  // quadrant upper right
@@ -222,7 +202,7 @@ constexpr unsigned int BITMAPS[] = {
     0xcccfffff, 0x1b3a, FLAG_TELETEXT,
     0x333fffff, 0x1b3b, FLAG_TELETEXT,
 
-    0, END_MARKER, 0  // End marker 
+    0, END_MARKER, 0  // End marker
 };
 
 // The channel indices are 0, 1, 2 for R, G, B
@@ -346,7 +326,8 @@ CharData findCharData(GetPixelFunction get_pixel, int x0, int y0,
         for (int y = 0; y < 8; y++) {
             for (int x = 0; x < 4; x++) {
                 bits = bits << 1;
-                if (get_channel(get_pixel(x0 + x, y0 + y), splitIndex) > splitValue) {
+                if (get_channel(get_pixel(x0 + x, y0 + y),
+                                splitIndex) > splitValue) {
                     bits |= 1;
                 }
             }
@@ -394,48 +375,9 @@ CharData findCharData(GetPixelFunction get_pixel, int x0, int y0,
     return createCharData(get_pixel, x0, y0, codepoint, best_pattern);
 }
 
-void printTermColor(std::ostream& os, const int &flags, int r, int g, int b) {
-    r = clamp_byte(r);
-    g = clamp_byte(g);
-    b = clamp_byte(b);
-
-    bool bg = (flags & FLAG_BG) != 0;
-
-    if ((flags & FLAG_MODE_256) == 0) {
-        os << (bg ? "\x1b[48;2;" : "\x1b[38;2;") << r << ';' << g << ';'
-                  << b << 'm';
-        return;
-    }
-
-    int ri = best_index(r, COLOR_STEPS, COLOR_STEP_COUNT);
-    int gi = best_index(g, COLOR_STEPS, COLOR_STEP_COUNT);
-    int bi = best_index(b, COLOR_STEPS, COLOR_STEP_COUNT);
-
-    int rq = COLOR_STEPS[ri];
-    int gq = COLOR_STEPS[gi];
-    int bq = COLOR_STEPS[bi];
-
-    int gray =
-        static_cast<int>(std::round(r * 0.2989f + g * 0.5870f + b * 0.1140f));
-
-    int gri = best_index(gray, GRAYSCALE_STEPS, GRAYSCALE_STEP_COUNT);
-    int grq = GRAYSCALE_STEPS[gri];
-
-    int color_index;
-    if (0.3 * sqr(rq - r) + 0.59 * sqr(gq - g) + 0.11 * sqr(bq - b) <
-        0.3 * sqr(grq - r) + 0.59 * sqr(grq - g) + 0.11 * sqr(grq - b)) {
-        color_index = 16 + 36 * ri + 6 * gi + bi;
-    } else {
-        color_index = 232 + gri;  // 1..24 -> 232..255
-    }
-    os << (bg ? "\x1B[48;5;" : "\u001B[38;5;") << color_index << "m";
-}
-
 int clamp_byte(int value) {
     return value < 0 ? 0 : (value > 255 ? 255 : value);
 }
-
-double sqr(double n) { return n * n; }
 
 int best_index(int value, const int STEPS[], int count) {
     int best_diff = std::abs(STEPS[0] - value);
@@ -449,105 +391,3 @@ int best_index(int value, const int STEPS[], int count) {
     }
     return result;
 }
-
-cimg_library::CImg<unsigned char> load_rgb_CImg(const char *const &filename) {
-    cimg_library::CImg<unsigned char> image(filename);
-    if (image.spectrum() == 1) {
-        // Greyscale. Just copy greyscale data to all channels
-        cimg_library::CImg<unsigned char> rgb_image(
-            image.width(), image.height(), image.depth(), 3);
-        for (unsigned int chn = 0; chn < 3; chn++) {
-            rgb_image.draw_image(0, 0, 0, chn, image);
-        }
-        return rgb_image;
-    }
-    return image;
-}
-
-void printCodepoint(std::ostream& os, int codepoint) {
-    if (codepoint < 128) {
-        os << static_cast<char>(codepoint);
-    } else if (codepoint < 0x7ff) {
-        os << static_cast<char>(0xc0 | (codepoint >> 6));
-        os << static_cast<char>(0x80 | (codepoint & 0x3f));
-    } else if (codepoint < 0xffff) {
-        os << static_cast<char>(0xe0 | (codepoint >> 12));
-        os << static_cast<char>(0x80 | ((codepoint >> 6) & 0x3f));
-        os << static_cast<char>(0x80 | (codepoint & 0x3f));
-    } else if (codepoint < 0x10ffff) {
-        os << static_cast<char>(0xf0 | (codepoint >> 18));
-        os << static_cast<char>(0x80 | ((codepoint >> 12) & 0x3f));
-        os << static_cast<char>(0x80 | ((codepoint >> 6) & 0x3f));
-        os << static_cast<char>(0x80 | (codepoint & 0x3f));
-    } else {
-        os << "ERROR";
-    }
-}
-
-void printImage(const cimg_library::CImg<unsigned char> &image,
-                const int &flags) {
-    GetPixelFunction get_pixel = [&](int x, int y) -> unsigned long {
-        return (((unsigned long) image(x, y, 0, 0)) << 16) 
-            | (((unsigned long) image(x, y, 0, 1)) << 8)
-            | (((unsigned long) image(x, y, 0, 2)));
-    };
-
-    CharData lastCharData;
-    for (int y = 0; y <= image.height() - 8; y += 8) {
-        for (int x = 0; x <= image.width() - 4; x += 4) {
-            CharData charData =
-                flags & FLAG_NOOPT
-                    ? createCharData(get_pixel, x, y, 0x2584, 0x0000ffff)
-                    : findCharData(get_pixel, x, y, flags);
-            if (x == 0 || charData.bgColor != lastCharData.bgColor)
-                printTermColor(std::cout, flags | FLAG_BG, charData.bgColor[0],
-                               charData.bgColor[1], charData.bgColor[2]);
-            if (x == 0 || charData.fgColor != lastCharData.fgColor)
-                printTermColor(std::cout, flags | FLAG_FG, charData.fgColor[0],
-                               charData.fgColor[1], charData.fgColor[2]);
-            printCodepoint(std::cout, charData.codePoint);
-            lastCharData = charData;
-        }
-        std::cout << "\x1b[0m" << std::endl;
-    }
-}
-
-// width, height
-std::pair<int, int> get_windows_size()
-{
-#ifdef _POSIX_VERSION
-    struct winsize w;
-    // If redirecting STDOUT to one file ( col or row == 0, or the previous
-    // ioctl call's failed )
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) != 0 ||
-        (w.ws_col | w.ws_row) == 0)
-    {
-        std::cerr << "Warning: failed to determine most reasonable size: "
-                  << strerror(errno) << ", defaulting to 20x6" << std::endl;
-        return std::make_pair<int, int>(0, 0);
-    }
-    return std::make_pair<int, int>(w.ws_col * 4, w.ws_row * 8);
-#elif defined _WIN32
-    CONSOLE_SCREEN_BUFFER_INFO w;
-    if (GetConsoleScreenBufferInfo(
-            GetStdHandle(STD_OUTPUT_HANDLE),
-            &w))
-    { // just like PowerShell, but without the hyphens, hooray
-        return std::make_pair<int, int>(w.dwSize.X * 4, w.dwSize.Y * 8);
-    }
-    else
-    {
-        std::cerr << "Warning: failed to determine most reasonable size: "
-                  << std::system_category().message(GetLastError())
-                  << ", defaulting to 80x24" << std::endl;
-        return std::make_pair<int, int>(0, 0);
-    }
-#else
-    std::cerr << "Warning: failed to determine most reasonable size: "
-                 "unrecognized system, defaulting to 80x24"
-              << std::endl;
-    return std::make_pair<int, int>(0, 0);
-#endif
-}
-
-} // namespace tiv

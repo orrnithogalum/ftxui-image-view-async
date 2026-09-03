@@ -1,4 +1,3 @@
-
 /*
  * Copyright (c) 2017-2023, Stefan Haustein, Aaron Liu
  *
@@ -31,23 +30,17 @@
  *     limitations under the License.
  */
 
-#ifndef TIV_LIB_H
-#define TIV_LIB_H
+#ifndef TIV_LIB_H_
+#define TIV_LIB_H_
 
-#include "CImg.h"
+
 #include <array>
 #include <functional>
-#include <iostream>
 
-namespace tiv {
+constexpr int FLAG_TELETEXT = 32;  // Bitset flag to use teletext characters.
+// 32 for backwards-compatibility reasons
+// as this was introduced after other bitset flags for the tiv CLI
 
-// Implementation of flag representation for flags in the main() method
-constexpr int FLAG_FG = 1;
-constexpr int FLAG_BG = 2;
-constexpr int FLAG_MODE_256 = 4;  // Limit colors to 256-color mode
-constexpr int FLAG_24BIT = 8;     // 24-bit color mode
-constexpr int FLAG_NOOPT = 16;    // Only use the same half-block character
-constexpr int FLAG_TELETEXT = 32; // Use teletext characters
 
 // Color saturation value steps from 0 to 255
 constexpr int COLOR_STEP_COUNT = 6;
@@ -57,37 +50,33 @@ constexpr int COLOR_STEPS[COLOR_STEP_COUNT] = {0, 0x5f, 0x87, 0xaf, 0xd7, 0xff};
 constexpr int GRAYSCALE_STEP_COUNT = 24;
 constexpr int GRAYSCALE_STEPS[GRAYSCALE_STEP_COUNT] = {
     0x08, 0x12, 0x1c, 0x26, 0x30, 0x3a, 0x44, 0x4e, 0x58, 0x62, 0x6c, 0x76,
-    0x80, 0x8a, 0x94, 0x9e, 0xa8, 0xb2, 0xbc, 0xc6, 0xd0, 0xda, 0xe4, 0xee
-};
+    0x80, 0x8a, 0x94, 0x9e, 0xa8, 0xb2, 0xbc, 0xc6, 0xd0, 0xda, 0xe4, 0xee};
 
-struct size {
-    unsigned int width;
-    unsigned int height;
-
-    size(unsigned int in_width, unsigned int in_height) : width(in_width), height(in_height) {}
-
-    explicit size(cimg_library::CImg<unsigned int> img) : width(img.width()), height(img.height()) {}
-
-    size scaled(double scale) {
-        return size(width * scale, height * scale);
-    }
-
-    size fitted_within(size container) {
-        double scale = std::min(container.width / static_cast<double>(width), container.height / static_cast<double>(height));
-        return scaled(scale);
-    }
-
-    size fitted_within(size* container) {
-        double scale = std::min(container->width / static_cast<double>(width), container->height / static_cast<double>(height));
-        return scaled(scale);
-    }
-};
-
+/**
+* @brief Function that returns a pixel from the image given its coordinates
+* @param x x-coordinate of the pixel
+* @param y y-coordinate of the pixel
+* @return The pixel value in 0xRRGGBB format
+*/
 typedef std::function<unsigned long(int, int)> GetPixelFunction;
 
+/**
+* @brief Get the value of a specific color channel for the specified pixel
+* @param rgb A pixel in 0xRRGGBB format
+* @param index 0, 1, or 2 for R, G, B
+* @return The pixel value between 0 and 255
+*/
+unsigned char get_channel(unsigned long rgb, int index);
+
 int clamp_byte(int value);
+
+/**
+* @brief Map color value to the closest possible color step
+* @param value Color value from 0 to 255
+* @param STEPS An array like COLOR_STEPS
+* @param count The distance between each color step (e.g. COLOR_STEP_COUNT)
+*/
 int best_index(int value, const int STEPS[], int count);
-double sqr(double n);
 
 /**
  * @brief Struct to represent a character to be drawn.
@@ -103,7 +92,8 @@ struct CharData {
 
 // Return a CharData struct with the given code point and corresponding averag
 // fg and bg colors.
-CharData createCharData(GetPixelFunction get_pixel, int x0, int y0, int codepoint, int pattern);
+CharData createCharData(GetPixelFunction get_pixel, int x0, int y0,
+                        int codepoint, int pattern);
 
 /**
  * @brief Find the best character and colors
@@ -115,14 +105,7 @@ CharData createCharData(GetPixelFunction get_pixel, int x0, int y0, int codepoin
  * @param flags
  * @return CharData
  */
-CharData findCharData(GetPixelFunction get_pixel, int x0, int y0, const int &flags);
-cimg_library::CImg<unsigned char> load_rgb_CImg(const char *const &filename);
+CharData findCharData(GetPixelFunction get_pixel, int x0, int y0,
+                      const int &flags);
 
-void printImage(const cimg_library::CImg<unsigned char> &image, const int &flags);
-void printTermColor(std::ostream &os, const int &flags, int r, int g, int b);
-void printCodepoint(std::ostream &os, int codepoint);
-
-std::pair<int, int> get_windows_size();
-#endif
-
-} // namespace tiv
+#endif  // TIV_LIB_H_
