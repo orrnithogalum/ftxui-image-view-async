@@ -102,7 +102,7 @@ private:
     }
 
 private:
-    size_t max_size_;
+    size_t max_size_ = 10000;
     Map map_;
 
     std::list<Key> order_; // front = most recently used, back = least recently used
