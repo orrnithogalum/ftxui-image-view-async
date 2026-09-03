@@ -80,6 +80,14 @@ public:
     }
 
     size_t size() const { return map_.size(); }
+    size_t max_size() const { return max_size_; }
+
+    // Changes the capacity at runtime. Shrinking evicts immediately
+    // (least-recently-used first) down to the new limit.
+    void set_max_size(size_t new_max_size) {
+        max_size_ = new_max_size;
+        evict_if_needed();
+    }
 
 private:
     // Move `key` to the front (most-recently-used end) of order_ in O(1).
@@ -102,7 +110,7 @@ private:
     }
 
 private:
-    size_t max_size_ = 10000;
+    size_t max_size_;
     Map map_;
 
     std::list<Key> order_; // front = most recently used, back = least recently used

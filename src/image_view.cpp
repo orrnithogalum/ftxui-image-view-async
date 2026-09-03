@@ -2,6 +2,7 @@
 // Use of this source code is governed by the MIT license that can be found in
 // the LICENSE file.
 
+#include <algorithm>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -213,9 +214,19 @@ public:
     //    whatever terminal-cell size they were last drawn at.
     //  - char_cache_ holds one small struct per 4x8-pixel terminal cell,
     //    so its cap can be far higher for the same memory budget.
-    inline static BoundedCache<std::string, ImageEntry> image_cache_{50};
-    inline static BoundedCache<ResizeKey, cimg_library::CImg<unsigned char>, ResizeKeyHash> resized_cache_{100};
-    inline static BoundedCache<CharKey, CharData, CharKeyHash> char_cache_{10000};
+    //
+    // These are just reasonable-ish starting points, sized for "a handful
+    // of images on screen at once". If your app can have dozens of
+    // distinct thumbnails visible simultaneously (a grid, several
+    // carousels, a queue view, and a playback bar, say), raise these via
+    // setImageCacheMaxSize() / setImageResizeCacheMaxSize() /
+    // setImageCharCacheMaxSize() at startup -- a cache smaller than your
+    // actual working set won't crash you (see the find()-not-at() note in
+    // Render() below) but it will mean images keep getting evicted and
+    // re-decoded/re-resized instead of staying cached.
+    inline static BoundedCache<std::string, ImageEntry> image_cache_{100};
+    inline static BoundedCache<ResizeKey, cimg_library::CImg<unsigned char>, ResizeKeyHash> resized_cache_{200};
+    inline static BoundedCache<CharKey, CharData, CharKeyHash> char_cache_{15000};
 
     // URLs currently being loaded by a background thread. Entries are
     // erased as soon as a load finishes (see the loader thread below)
@@ -224,6 +235,19 @@ public:
     // distinct URLs ever requested over the process's lifetime.
     inline static std::unordered_map<std::string, bool> inflight_;
     inline static std::mutex mutex_;
+
+    // Caps how many background loader threads can be running at once.
+    // Each one is a real OS thread and, for network URLs (when CImg isn't
+    // built with libcurl), a curl/wget *subprocess* -- spawning dozens of
+    // these at the same instant (e.g. an app opening on a screen with 40+
+    // uncached thumbnails) is wasteful at best, and at worst can hit
+    // OS-level fd/process limits or lean on rare concurrency edge cases in
+    // CImg's own network-loading code. Requests beyond the cap simply wait:
+    // ComputeRequirement() re-checks every frame, and on_loaded_ already
+    // triggers a redraw whenever any load finishes, so a queued image
+    // starts as soon as a slot frees up.
+    inline static std::atomic<int> inflight_count_{0};
+    inline static int max_concurrent_loads_ = 6;
 
     inline static cimg_library::CImg<unsigned char> black_img = cimg_library::CImg<unsigned char>(1, 1, 1, 3, 0);
     inline static std::function<void()> on_loaded_;
@@ -250,9 +274,16 @@ public:
                     url_, ImageEntry{black_img, g_next_version.fetch_add(1, std::memory_order_relaxed)});
                 img = &it2->second.img;
 
-                // If not already loading, start an async load.
-                if (inflight_.find(url_) == inflight_.end()) {
+                // If not already loading, and we have room for another
+                // concurrent load, start one. If we're at the cap, we
+                // simply don't start a thread this frame -- ComputeRequirement()
+                // runs again next frame (redraws are triggered whenever any
+                // in-flight load finishes), so this naturally retries until
+                // a slot opens up, without needing a real queue.
+                if (inflight_.find(url_) == inflight_.end() &&
+                    inflight_count_.load(std::memory_order_relaxed) < max_concurrent_loads_) {
                     inflight_[url_] = true;
+                    inflight_count_.fetch_add(1, std::memory_order_relaxed);
 
                     std::string url_copy = url_;
 
@@ -272,6 +303,7 @@ public:
                                        g_next_version.fetch_add(1, std::memory_order_relaxed)});
 
                         inflight_.erase(url_copy);
+                        inflight_count_.fetch_sub(1, std::memory_order_relaxed);
 
                         if (on_loaded_) {
                             on_loaded_();
@@ -303,7 +335,27 @@ public:
         auto origin_image_width = (box_.x_max - box_.x_min + 1) * 4;
         auto origin_image_height = (box_.y_max - box_.y_min + 1) * 8;
 
-        auto& entry = image_cache_.at(url_);
+        // NOTE: we deliberately don't use image_cache_.at(url_) here. This
+        // widget's own ComputeRequirement() (earlier in this same frame)
+        // guarantees url_ was in image_cache_ at that point -- but FTXUI
+        // computes requirements for the *entire* tree before rendering any
+        // of it, so if the number of distinct images on screen is close to
+        // or over image_cache_'s capacity, a later widget's
+        // ComputeRequirement() can evict this one's entry before we get
+        // here. at() would throw std::out_of_range in that case, which
+        // nothing catches on the way back up through FTXUI's render loop --
+        // an uncaught exception there is a guaranteed std::terminate() /
+        // SIGABRT, not a graceful failure. find() + a placeholder fallback
+        // means a too-small cache costs you a flickered-back-to-black
+        // thumbnail for a frame, not a crash. If you're seeing this happen
+        // often, raise the caches with setImageCacheMaxSize() below rather
+        // than relying on this fallback as the normal path.
+        auto cache_it = image_cache_.find(url_);
+        if (cache_it == image_cache_.end()) {
+            cache_it = image_cache_.emplace(
+                url_, ImageEntry{black_img, g_next_version.fetch_add(1, std::memory_order_relaxed)}).first;
+        }
+        auto& entry = cache_it->second;
         const cimg_library::CImg<unsigned char>* original = &entry.img;
         uint64_t version = entry.version;
 
@@ -384,6 +436,26 @@ private:
 
 void setOnImageLoadedCallback(std::function<void()> cb) {
     ImageView::on_loaded_ = std::move(cb);
+}
+
+void setImageCacheMaxSize(size_t max_entries) {
+    std::lock_guard<std::mutex> lock(ImageView::mutex_);
+    ImageView::image_cache_.set_max_size(max_entries);
+}
+
+void setImageResizeCacheMaxSize(size_t max_entries) {
+    std::lock_guard<std::mutex> lock(ImageView::mutex_);
+    ImageView::resized_cache_.set_max_size(max_entries);
+}
+
+void setImageCharCacheMaxSize(size_t max_entries) {
+    std::lock_guard<std::mutex> lock(ImageView::mutex_);
+    ImageView::char_cache_.set_max_size(max_entries);
+}
+
+void setMaxConcurrentImageLoads(int max_concurrent) {
+    std::lock_guard<std::mutex> lock(ImageView::mutex_);
+    ImageView::max_concurrent_loads_ = std::max(1, max_concurrent);
 }
 
 Element image_view(std::string_view url) {
